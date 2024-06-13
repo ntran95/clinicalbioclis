@@ -1,0 +1,293 @@
+---
+title: "Processed filtered ctDNA Response for `r params$trial`: Tempus"
+author: "Nicole Tran"
+date:  "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    code_download: true
+    collapsed: yes
+    highlight: tango
+    number_sections: no
+    theme: yeti
+    toc: true
+    toc_float: true
+fontsize: 25pt
+editor_options:
+  chunk_output_type: console
+params:
+  ctdna: ctdna
+  date: date
+  trial: trial
+  functions: functions
+  resultsdir: resultsdir
+  response: response
+---
+
+<style>
+table {
+  white-space: nowrap;
+}
+</style>
+
+```{r,setup, include=FALSE}
+print(getwd())
+
+#global knit options
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = FALSE)
+#knitr::opts_knit$set(root.dir = here::here()) 
+options(scipen=999)
+
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(reshape2)
+library(DT)
+library(ggrepel)
+library(cowplot)
+library(purrr)
+library(dplyr)
+library(lubridate)
+
+```
+
+```{r,readIn, echo=FALSE}
+
+ctdna <- readRDS(params$ctdna)
+date <- params$date
+trial <- params$trial 
+functions <- params$functions
+resultsdir <- params$resultsdir
+response <- as.logical(params$response)
+
+devtools::load_all(functions)
+
+script_name <- paste(date, trial, "filtered", "ctDNA", sep = "_")
+
+```
+
+## Tables {.tabset .tabset-pills}
+
+### VAF summary
+
+```{r vaf_summary, echo=FALSE, warning=FALSE, results = 'asis'}
+
+DT::datatable(ctdna@vafsummary, width = "100%", rownames = FALSE, filter = "top", 
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'vaf_summary'),
+                                                                     list(extend = 'excel', filename = 'vaf_summary'))))
+
+```
+
+### Alteration summary
+
+```{r alt_summary, echo=FALSE, warning=FALSE,results = 'asis'}
+ 
+DT::datatable(ctdna@alteration_summary, width = "100%", rownames = FALSE, filter = "top", 
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'alt_summary'),
+                                                                     list(extend = 'excel', filename = 'alt_summary'))))
+
+```
+
+### Patient summary
+
+```{r pt_summary, echo=FALSE, warning=FALSE, results = 'asis'}
+
+DT::datatable(ctdna@patient_summary, width = "100%", rownames = FALSE,  filter = "top",
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'patient_summary'),
+                                                                     list(extend = 'excel', filename = 'patient_summary'))))
+
+```
+
+### Sample summary
+
+```{r sample_summary, echo=FALSE, warning=FALSE, results = 'asis'}
+
+DT::datatable(ctdna@sample_summary, width = "100%", rownames = FALSE, filter = "top",   
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'patient_summary'),
+                                                                     list(extend = 'excel', filename = 'patient_summary'))))
+
+```
+
+### Filtered out
+
+```{r omitted, echo=FALSE, warning=FALSE, results = 'asis'}
+
+DT::datatable(ctdna@omitted, width = "100%", rownames = FALSE,  filter = "top",
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'filtered_out'),
+                                                                     list(extend = 'excel', filename = 'filtered_out'))))
+
+```
+
+### Screen fail
+
+```{r screenfail, echo=FALSE, warning=FALSE, results = 'asis'}
+
+DT::datatable(ctdna@screenfail, width = "100%", rownames = FALSE,  filter = "top",
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'screen_fail'),
+                                                                     list(extend = 'excel', filename = 'screen_fail'))))
+
+```
+
+### mVAFR/D
+
+```{r mvafr, echo=FALSE, warning=FALSE, results = 'asis'}
+
+DT::datatable(ctdna@addtl_summaries$mVAFR, width = "100%", rownames = FALSE, filter = "top",
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'mvafr'),
+                                                                     list(extend = 'excel', filename = 'mvafr'))))
+
+```
+
+### Best mVAFR
+
+```{r bestmvaf, echo=FALSE, warning=FALSE, results = 'asis'}
+
+DT::datatable(ctdna@best_mvaf, width = "100%", rownames = FALSE, filter = "top",
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'response_out'),
+                                                                     list(extend = 'excel', filename = 'response_out'))))
+
+```
+
+## VAF plots {.tabset .tabset-pills}
+
+```{r vaf_plots, echo=FALSE, warning=FALSE, results = 'asis', fig.align="center", fig.width=10,fig.height=10}
+
+for(i in 1:length(ctdna@VAFplots_wm)){
+  
+  cat("\n\n")
+  cat('### ', names(ctdna@VAFplots_wm)[[i]], "\n\n")
+  print(ctdna@VAFplots_wm[[i]])
+  cat("\n\n")
+
+  }
+
+```
+
+## mVAF plots {.tabset .tabset-pills}
+
+```{r mvaf_plots, echo=FALSE, warning=FALSE, results = 'asis', fig.align="center", fig.width=10,fig.height=10}
+
+for(i in 1:length(ctdna@mVAFplots_wm)){
+  
+  cat("\n\n")
+  cat("### ", names(ctdna@mVAFplots_wm)[[i]], "\n\n\n\n")
+  print(ctdna@mVAFplots_wm[[i]])
+  cat("\n\n")
+
+  }
+
+```
+
+## Response analysis
+  
+```{r, response_plots, echo=FALSE, warning=FALSE, results = 'asis', fig.align="center",fig.width=20,fig.height=16}
+if(response){
+  cat("### Response Plots {.tabset .tabset-pills}")
+
+  for(i in 1:length(ctdna@responsePlots_wm)){
+  
+  cat("\n\n")
+  cat("#### ", names(ctdna@responsePlots_wm)[[i]], "\n\n\n\n")
+  print(ctdna@responsePlots_wm[[i]])
+  cat("\n\n")
+
+  }
+}
+```
+
+
+```{r, response_out, echo=FALSE, warning=FALSE, results = 'asis', fig.align="center",fig.width=20,fig.height=16}
+
+  # ==== Export Summary Tables ====
+resultsdirsub <- paste0(resultsdir, "/", script_name, "_results/")
+
+outPlots <- list("Somatic_VAF" = paste0(resultsdirsub,"Somatic_VAF/"),
+                 "mVAF" = paste0(resultsdirsub,"mVAF/"))
+
+if(response){outPlots[["mVAFR"]] <- paste0(resultsdirsub,"mVAFR/") }
+
+lapply(outPlots, dir.create, showWarnings = F,recursive = T)
+
+summaryDFList <- list(vafsummary = ctdna@vafsummary, 
+                      alteration_summary = ctdna@alteration_summary, 
+                      sample_summary = ctdna@sample_summary, 
+                      patient_summary = ctdna@patient_summary,
+                      omitted = ctdna@omitted)
+
+if(response){summaryDFList[["best_mvaf"]] <- ctdna@best_mvaf}
+
+withr::with_dir(resultsdirsub,{
+  writeToxlsxMultitab(
+  data = summaryDFList,
+  name = names(summaryDFList),
+  file = paste0(script_name, "_Summary.xlsx"))
+})
+
+# ==== Export VAF Plots ====
+VAFPlotsWatermark <-ctdna@VAFplots_wm
+
+for(plt in seq_along(VAFPlotsWatermark)){
+  path <- paste0(outPlots$Somatic_VAF,
+                 names(VAFPlotsWatermark)[plt], "_",
+                 "Somatic_VAF.png")
+  
+  print(path)
+  
+  png(filename = path,
+      res = 300,
+      width=10,
+      height=8,
+      units = "in")
+  print(VAFPlotsWatermark[[plt]])
+  dev.off()
+}
+
+# ==== Export mVAF Plots ====
+mVAFPlotsWatermark <-ctdna@mVAFplots_wm
+
+for(plt in seq_along(mVAFPlotsWatermark)){
+  path <- paste0(outPlots$mVAF,
+                 names(mVAFPlotsWatermark)[plt], "_",
+                 "mVAF.png")
+  
+  print(path)
+  
+  png(filename = path,
+      res = 300,
+      width=10,
+      height=8,
+      units = "in")
+  print(mVAFPlotsWatermark[[plt]])
+  dev.off()
+}
+
+# ==== Export mVAFR Plots ====
+responsePlotsWatermark <-ctdna@responsePlots_wm
+
+for(plt in seq_along(responsePlotsWatermark)){
+  path <- paste0(outPlots$mVAFR,
+                 names(responsePlotsWatermark)[plt], "_",
+                 "mVAFR.png")
+  
+  print(path)
+  
+  png(filename = path,
+      res = 300,
+      width=18,
+      height=8,
+      units = "in")
+  print(responsePlotsWatermark[[plt]])
+  dev.off()
+  }
+
+
+
+```

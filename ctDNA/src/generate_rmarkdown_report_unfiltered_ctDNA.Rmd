@@ -1,0 +1,202 @@
+---
+title: "Processed unfiltered ctDNA Analysis for `r params$trial`: Tempus"
+author: "Nicole Tran"
+date:  "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    code_download: true
+    collapsed: yes
+    highlight: tango
+    number_sections: no
+    theme: yeti
+    toc: yes
+    toc_float: yes
+fontsize: 25pt
+editor_options:
+  chunk_output_type: console
+params:
+  ctdna: ctdna
+  date: date
+  trial: trial
+  functions: functions
+  resultsdir: resultsdir
+---
+
+<style>
+table {
+  white-space: nowrap;
+}
+</style>
+
+
+```{r,inputVar, echo=FALSE, eval=FALSE}
+# ==== interactive session ====
+# does not run when knitted
+params <- list()
+
+data_location <- "rserver"
+if(data_location == "rserver"){
+  params$ctdna <- "/ClinBio/SP-ClinicalBioinformatics/shared/git-repos/reparecompbio/clinicalbioinfoCLIs/ctDNA/test/data/2022-11-07_RP3500-03_unfilteredCtDNA.rds"
+  params$date <- "2022-10-31"
+  params$trial <- "RP3500-03"
+  params$functions <- "/ClinBio/SP-ClinicalBioinformatics/shared/git-repos/reparecompbio/clinicalbioinfoCLIs/ctDNA/src/functions_ctDNA.R"
+  params$resultsdir <-"/ClinBio/SP-ClinicalBioinformatics/shared/git-repos/reparecompbio/clinicalbioinfoCLIs/ctDNA/test/results/"
+
+}else if(data_location == "local"){
+  setwd("/Users/NicoleTran/Repare Therapeutics/Repare-R&D - ClinicalBioinformatics/shared/git-repos/reparecompbio/clinicalbioinfoCLIs/ctDNA/")
+  params$ctdna <- "./test/2022-11-07_RP3500-03_unfilteredCtDNA.rds"
+  params$date <- "2022-10-31"
+  params$trial <- "RP3500-03"
+  params$functions <- "./src/functions_ctDNA.R"
+}
+
+
+```
+
+```{r,setup, include=FALSE}
+print(getwd())
+
+#global knit options
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = FALSE)
+#knitr::opts_knit$set(root.dir = here::here()) 
+options(scipen=999)
+
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(reshape2)
+library(DT)
+library(ggrepel)
+library(cowplot)
+library(purrr)
+library(dplyr)
+library(lubridate)
+
+```
+
+```{r,readIn, echo=FALSE}
+ctdna <- readRDS(params$ctdna)
+date <- params$date
+trial <- params$trial 
+functions <- params$functions
+resultsdir <- params$resultsdir
+
+devtools::load_all(functions)
+
+script_name <- paste(date, trial, "unfiltered", "ctDNA", "Tempus", sep = "_")
+
+```
+
+# Tables {.tabset .tabset-pills}
+
+## VAF summary
+
+```{r vaf_summary, echo=FALSE, warning=FALSE, results = 'asis'}
+vafsummary <- ctdna@vafsummary
+
+DT::datatable(vafsummary, width = "100%", rownames = FALSE,  filter = "top",
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'vaf_summary'),
+                                                                     list(extend = 'excel', filename = 'vaf_summary'))))
+
+```
+
+## Alteration summary
+
+```{r alt_summary, echo=FALSE, warning=FALSE,results = 'asis'}
+alteration_summary <-  vafsummary %>%
+  select(any_of(c(alteration_summary_cols))) %>%
+  distinct()
+ 
+
+DT::datatable(alteration_summary, width = "100%", rownames = FALSE, filter = "top",
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'alt_summary'),
+                                                                     list(extend = 'excel', filename = 'alt_summary'))))
+
+```
+
+## Sample summary
+
+```{r sample_summary, echo=FALSE, warning=FALSE, results = 'asis'}
+sample_summary <- vafsummary %>%
+  select(any_of(c(sample_summary_cols))) %>%
+  distinct()
+
+DT::datatable(sample_summary, width = "100%", rownames = FALSE, filter = "top",   
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'patient_summary'),
+                                                                     list(extend = 'excel', filename = 'patient_summary'))))
+
+```
+
+## Monitoring out summary
+
+```{r pt_summary, echo=FALSE, warning=FALSE, results = 'asis'}
+monitoring <- ctdna@monitoring
+
+DT::datatable(monitoring, width = "100%", rownames = FALSE, filter = "top",   
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'patient_summary'),
+                                                                     list(extend = 'excel', filename = 'patient_summary'))))
+
+```
+
+# ctDNA VAF Plots {.tabset .tabset-pills}
+
+```{r, results='asis',fig.width=10,fig.height=10}
+headings <- names(ctdna@VAFplots_wm)
+for (i in 1:length(ctdna@VAFplots_wm)) {
+  cat("\n\n## ",headings[i],"\n\n")
+  cat("\n\n")
+  print(ctdna@VAFplots_wm[[i]])
+  cat('\n\n')
+}
+```
+
+```{r, exportOut,eval=TRUE, results='hide'}
+# ==== Export Summary Tables ====
+resultsdirsub <- paste0(resultsdir, "/", script_name, "_results/")
+outPlots <- paste0(resultsdirsub,"VAF/")
+dir.create(outPlots,showWarnings = F,recursive = T)
+
+summaryDFList <- list(vafsummary = vafsummary, 
+                      alteration_summary = alteration_summary, 
+                      sample_summary = sample_summary, 
+                      monitoring = monitoring)
+
+# append cnv kit
+#summaryDFList[["CNV Kit"]] <- VAFSummaryList$cnvkit
+
+withr::with_dir(resultsdirsub,{
+  writeToxlsxMultitab(
+  data = summaryDFList,
+  name = names(summaryDFList),
+  file = paste0(script_name, "_Summary.xlsx"))
+})
+
+# ==== Export VAF Plots ====
+VAFPlotsWatermark <-ctdna@VAFplots_wm
+
+for(plt in seq_along(VAFPlotsWatermark)){
+  path <- paste0(outPlots,
+                 names(VAFPlotsWatermark)[plt], "_",
+                 "SNV_VAF.png")
+  
+  print(path)
+  
+  png(filename = path,
+      res = 300,
+      width=10,
+      height=8,
+      units = "in")
+  print(VAFPlotsWatermark[[plt]])
+  dev.off()
+}
+
+```
+
+
+
+
