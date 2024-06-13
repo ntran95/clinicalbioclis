@@ -1,0 +1,532 @@
+---
+title: "Processed Clinical Analysis"
+author: Nicole Tran
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+knit: (function(input,...) {
+  rmarkdown::render(
+    input,
+    knit_root_dir = here::here(),
+    output_dir = paste0("./results/")
+    )
+    }
+    )
+output:
+  html_document:
+    code_folding: hide
+    code_download: true
+    collapsed: yes
+    highlight: tango
+    number_sections: no
+    theme: yeti
+    toc: yes
+    toc_float: yes
+fontsize: 25pt
+editor_options:
+  chunk_output_type: console
+---
+<style>
+    body {
+    	font-size: 16px;
+        text-align: justify;
+    }
+
+    .main-container {
+        max-width: 80%;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    code {
+    	font-size: 75%;
+    }
+
+    code.r {
+    	font-size: 80%;
+    }
+
+    div.main-container {
+        max-width: 80%;
+    }
+</style>
+
+```{r, inputVar, echo = FALSE}
+# ==== specify input variables here ====
+script_name <- "2022-08-29_RP3500-01_clinical_analysis_QuartzBio"
+
+inExtensions <- "./../../../../git-repos/reparecompbio/clinicalbioinfoextensions/"
+
+inClinical <- here::here("../processing/data/2022-08-29_QuartzBio/2022-08-29_RP3500-01_processed_clinical_data.Rda")
+
+#for complete clinical analysis (w/o cutting data), set cutData =FALSE
+cutData <- TRUE 
+
+additionalSubset <- FALSE
+
+# call Patient cut off, inverse
+additionalexpr <- bquote(!(`Daily Dose` < 100 & Module %in% c("1a", "1c (3/4)", "1c (5/2)", "1b")) & !is.na(`Tx Discont.`))
+
+# label name of subanalysis suffix
+subanalysisName <- "100D_M1_M2_M3_M4"
+
+subanalysisDescription <- "with patients from M1 with Daily Dose >= 100, and patients from M2, M3 and M4"
+```
+
+
+```{r,setup, include=FALSE}
+
+#global knit options
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = FALSE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file()) 
+
+
+library(tidyverse)
+library(shiny)
+library(readxl)
+library(openxlsx)
+library(reshape2)
+library(DT)
+library(survival)
+library(survminer)
+library(ggrepel)
+library(here)
+library(cowplot)
+
+devtools::load_all(inExtensions)
+```
+
+```{r, load, results='hide'}
+load(inClinical)
+
+# extract extraction date and trial from script_name
+extract_date <- str_extract(string = script_name, "\\d{4}-\\d{2}-\\d{2}")
+  
+trial <- str_extract(string = script_name, "RP\\d{4}-\\d{2}")
+
+# labelling all data cutoff analysis (for subfolders)
+Analysis <- c("ALL",
+              # by Enrollment Genes, ordered by highest to lowest freq
+              names(sort(table(clinical_list$Clinical$`Enrollment Gene`),
+                         decreasing = TRUE)),
+              "Non-ATM",
+              "BRCA1-BRCA2",
+              # by Tissue Type, ordered by highest to lowest freq, n >3 entries each Tissue group
+              names(sort(table(clinical_list$Clinical$`Tissue Type`)[table(clinical_list$Clinical$`Tissue Type`) > 3],
+                         decreasing = TRUE)),
+              
+              names(sort(table(clinical_list$Clinical$Consolidated.Modules),
+                         decreasing = TRUE))
+              
+              )
+
+# vector grouping Gene and Tissue from Analysis 
+indvGenes <- Analysis[Analysis %in% clinical_list$Clinical$`Enrollment Gene`]
+
+indvTissues <- Analysis[Analysis %in% clinical_list$Clinical$`Tissue Type`]
+
+indvModules <-Analysis[Analysis %in% clinical_list$Clinical$Consolidated.Modules]
+
+analysisGroup <- list("ALL"= "ALL",
+                      "By Enrollment Gene" = c(indvGenes, 
+                                               "Non-ATM", 
+                                               "BRCA1-BRCA2"),
+                      "By Tissue Type"=  c(indvTissues),
+                      "By Modules" = c(indvModules))
+
+# create list of subset expressions
+expr <- list()
+
+custom_subset <- list()
+
+for(i in seq_along(Analysis)){
+  if(Analysis[i] == "ALL"){
+    expr[[Analysis[i]]] <- bquote(TRUE)
+    custom_subset[[Analysis[i]]] <- paste("No filtering as been applied",sep = "\n")
+  }else if(Analysis[i] %in% indvGenes){
+      #bqoute is similar expression() but allows variable inputs
+      expr[[Analysis[i]]] <- bquote(`Enrollment Gene` == .(Analysis[i])) 
+      custom_subset[[Analysis[i]]] <- paste(Analysis[i], "From Enrollment Gene")
+  }else if(Analysis[i] == "Non-ATM"){
+    expr[[Analysis[i]]] <- bquote(`Enrollment Gene` != "ATM")
+    custom_subset[[Analysis[i]]] <- paste("Non-ATM Genes From Enrollment Gene")
+  }else if(Analysis[i] == "BRCA1-BRCA2"){
+    expr[[Analysis[i]]] <- bquote(`GeneGroup2` == "BRCA1/2")
+    custom_subset[[Analysis[i]]] <- paste("Non-ATM Genes from GeneGroup2")
+  }else if(Analysis[i] %in% indvTissues){
+     expr[[Analysis[i]]] <- bquote(`Tissue Type` == .(Analysis[i])) 
+     custom_subset[[Analysis[i]]] <- paste(Analysis[i], "From Tissue Type")
+  }else if(Analysis[i] %in% indvModules){
+     expr[[Analysis[i]]] <- bquote(`Consolidated.Modules` == .(Analysis[i])) 
+     custom_subset[[Analysis[i]]] <- paste(Analysis[i], "From Modules")
+  }
+}
+
+# ==== specify additional clinical parameters for cut off ====
+if(additionalSubset){
+  #subset complete Clinical Data
+  clinical_list$Clinical <- subset(clinical_list$Clinical,
+                                   eval(additionalexpr))
+  #rename Analysis names
+  Analysis <- paste0(Analysis,"-", subanalysisName)
+  #update custom subset message
+  custom_subset <- sapply(paste0(names(custom_subset),"-", subanalysisName), 
+                          paste,  subanalysisDescription)
+  #update names in analysisGroup
+  analysisGroup <- sapply(analysisGroup, paste0, "-", subanalysisName)
+}
+# ----
+
+```
+
+```{r, modify, results='hide'}
+### ADD additional modifications here:
+
+# iterate thru each clinical list, revalue enrollments genes "SETD2" out of "Other Step2"
+for (i in seq_along(clinical_list)){
+  if ("GeneGroup" %in% colnames(clinical_list[[i]])){
+    print(names(clinical_list)[i])
+    # remove SETD from Other Step2
+    clinical_list[[i]] <- 
+      setGeneGroup(df = clinical_list[[i]],
+                                        nonStep2Genes = "BRCA1|BRCA2|ATM|CDK12|SETD2"
+                                          )
+    
+    #relevel GeneGroup factors to order facets plots
+    clinical_list[[i]]$GeneGroup <- 
+      factor(clinical_list[[i]]$GeneGroup, 
+             levels = c("ATM", "BRCA1", "BRCA2", "CDK12", "SETD2","Other STEP2"))
+  }
+}
+
+```
+
+```{r, subset, results='hide'}
+DataAnalysis <- list()
+for (i in seq_along(Analysis)) {
+  # Filter Data (if applicable)
+  if(cutData){
+    # only need to subset Clinical
+    # Response and Markers df are adjusted and returned after running runClinicalAnalyis()
+    
+    print("Subsetting patients that matches the data cut off...")
+    DataAnalysis[[Analysis[i]]] <- subset(clinical_list$Clinical, eval(expr[[i]]))
+    
+    #add subsetted DataAnalysis to clinical_list(), the subsetted DataAnalysis will
+    #be returned when running runClinicalAnalysis()
+    clinical_list[[Analysis[i]]] <- DataAnalysis[[Analysis[i]]]
+    
+  }else{
+    DataAnalysis[[Analysis[i]]] <- clinical_list$Clinical
+  }
+  
+  # after cutting the data, ensure that "Tx-Discont." has not been updated after the extraction date (stated in the script_name)
+  
+  # iterate thru every df in processed clinical_list, look for columns associated with timestamps that need to be adjusted after the extraction date
+  
+  for(j in seq_along(clinical_list)){
+    # if the "Tx Discont." column contains dates after the extraction date, correct back to the extraction date
+    if(any(clinical_list$Clinical$`Tx Discont.` > as.POSIXlt(extract_date),na.rm = TRUE)){
+    #if(any(grepl("Tx Discont.", colnames(clinical_list[[i]])))){
+      print(paste("Correcting timestamps corresponding to the on entries passing Data CutOff on or before:",
+                  extract_date,
+                  "on the following dataframe:",
+                  c(names(clinical_list)[j])))
+      
+      clinical_list[[j]] <- 
+        correctClinicalTimestamp(data = clinical_list[[j]],date = extract_date)
+    }
+  }
+
+}
+
+# filter subsetted Clinical Data if there are no subject entries and 
+DataAnalysis <- DataAnalysis[sapply(DataAnalysis, nrow) > 0]
+Analysis <- Analysis[Analysis %in% names(DataAnalysis)]
+custom_subset <- custom_subset[names(custom_subset) %in% names(DataAnalysis)]
+analysisGroup <- lapply(analysisGroup, function(x) x[x %in% Analysis])
+```
+
+```{r, runAnalysis, results='hide'}
+clinicalAnalysis <- list()
+
+for(i in seq_along(Analysis)){
+  
+  print(Analysis[i])
+  
+     # ==== create output directories ====
+    outFolder <- paste0("./results/", script_name, "_results/", Analysis[i],"/")
+  
+    dir.create(here(outFolder),showWarnings = F,recursive = T)
+    
+    # ====run clinicalAnalysis() for each subset ====
+    clinicalAnalysis[[Analysis[i]]] <-
+      runClinicalAnalysis(
+      script_name = script_name, 
+      #Analysis = Analysis[i],
+      DataAnalysis = DataAnalysis[[i]],
+      clinical_list = clinical_list)
+
+     # ==== save Freq Tables ====
+     writeToxlsxMultitab(
+       data = clinicalAnalysis[[i]]$clinicalGenomicsTables,
+       name = names(clinicalAnalysis[[i]]$clinicalGenomicsTables),
+       file =  here(paste0(outFolder,
+                           extract_date, "_",
+                           trial, "_",
+                           #Analysis, "_",
+                           "Freq_Table",
+                           ".xlsx")))
+  
+  #  ==== save Patient tracker ==== 
+   writeToxlsxMultitab(data = clinicalAnalysis[[i]]$clinicalData,
+                                                  name = names(clinicalAnalysis[[i]]$clinicalData),
+                                                  file =  here(paste0(outFolder,
+                                                                 extract_date, "_",
+                                                                 trial, "_",
+                                                                 #Analysis, "_",
+                                                                 "Clinical_Data",
+                                                                 ".xlsx")))
+}
+```
+
+
+```{r,include = FALSE}
+  DT::datatable(matrix())
+```
+
+```{r, knitOut, results='asis' ,fig.width=20,fig.height=18}
+# print analysis iteratively as tabsets in Rmd
+
+#select plots to knit, export the rest
+knittedPlots <- c("Swimmer_Full",
+                  "Swimmer_Gene_Marker",
+                  "Facets.survPlot",
+                  "Type.of.loss.grped.survPlot",
+                  "Waterfall",
+                  "Waterfall_Gene",
+                  "Spid_Response_Name",
+                  "Spid_Response_Grped_Name",
+                  "Spid_Marker_Named")
+
+for (groups in seq_along(analysisGroup)){
+  # ==== print analysis headers ====
+    cat(sprintf("\n\n# %s\n\n", names(analysisGroup)[groups]))
+    cat("\n\n")
+    
+  #create sub headers split by analysis in groups
+    
+  subAnalysis <- c(paste("Analysis","#",  
+                      seq(1:length(analysisGroup[[groups]])),":", 
+                      analysisGroup[[groups]]))
+  
+  custom_subset_sub <- custom_subset[names(custom_subset) %in% analysisGroup[[groups]]]
+  
+  subclinicalAnalysis <- clinicalAnalysis[names(clinicalAnalysis) %in% analysisGroup[[groups]]]
+  
+  for (i in 1:length(subAnalysis)) {
+
+    # ==== print analysis headers ====
+    cat(sprintf("\n\n## %s\n\n", subAnalysis[i]))
+    cat("\n\n")
+    
+    # ==== print analysis summary ====
+    cat(sprintf("\n\n### %s\n\n", paste("Analysis Summary")))
+    
+    cat(paste(
+    "The clinical extract_date was processed from the Patient Tracker last updated on:", extract_date, "\n"),sep = "\n")
+    
+    if(cutData){
+      cat(paste("This clinical analysis has subsetted patients using the following data cut off parameters: "))
+    cat(custom_subset_sub[[i]], "\n",sep = "\n")
+    }else{
+      cat(paste0("This clinical analysis has not been subsetted. All subsequent analysis results are processed using the entire dataset."))
+    }
+    
+    cat(paste("The clinical analysis was computed using Repare's clinicalbioinfoextension library version:", packageVersion("clinicalbioinfoextensions"), "\n"))
+    
+  #   # ==== Clinical Frequency Tables ====
+      cat(sprintf("\n\n### %s\n\n", paste("Clinical Frequency Tables {.tabset .tabset-pills}")))
+    
+      # print frequency tables iteratively as tabsets in Rmd
+    tbl_headings <- names(subclinicalAnalysis[[i]]$clinicalGenomicsTables)
+    #rename
+    tbl_headings[grep("Gene by Flag ", tbl_headings)] <- "Gene by Status"
+    
+      for (j in 1:length(subclinicalAnalysis[[i]]$clinicalGenomicsTables)) {
+        cat(sprintf("\n\n#### %s\n\n", tbl_headings[j]))
+        cat("\n\n")
+        #print(htmltools::tagList(tab_list[[i]]))
+        cat(knitr::knit_print(DT::datatable(subclinicalAnalysis[[i]]$clinicalGenomicsTables[[j]], width = "100%",rownames = FALSE, options = list(
+                                    pageLength = nrow(subclinicalAnalysis[[i]]$clinicalGenomicsTables[[j]])))))
+        cat("\n\n")
+      }
+  
+  #  # ==== Clinical Plots ====
+   cat(sprintf("\n\n### %s\n\n", paste("Clinical Plots {.tabset .tabset-pills}")))
+  
+  plt_headings <- names(subclinicalAnalysis[[i]]$clinicalPlotsWatermark)[names(subclinicalAnalysis[[i]]$clinicalPlotsWatermark) %in% knittedPlots]
+  #subset clinicalPlotsWatermark to only selected plots
+  knittedclinicalPlotsWatermark <- subclinicalAnalysis[[i]]$clinicalPlotsWatermark[plt_headings]
+  
+  for (plt in 1:length(knittedclinicalPlotsWatermark)) {
+   cat("\n\n#### ",plt_headings[plt],"\n\n")
+   cat("\n\n")
+   print(knittedclinicalPlotsWatermark[[plt]])
+   cat('\n\n')
+  }
+  
+  
+  }
+} #end main for-loop
+
+```
+
+```{r,savePlots, results='hide', eval=FALSE}
+for(i in seq_along(Analysis)){
+      # # # export clinicalPlots with watermark to results folder
+  clinicalPlotsWatermark <- clinicalAnalysis[[i]]$clinicalPlotsWatermark
+  
+  outFolder <- paste0("./results/", script_name, "_results/", Analysis[i],"/")
+
+  TOT <- max(clinicalAnalysis[[i]]$clinicalPlotDF$DataSwimPlot$Weeks)
+  Patients <- nrow(clinicalAnalysis[[i]]$clinicalPlotDF$DataSwimPlot)
+  for(plt in seq_along(clinicalPlotsWatermark)){
+      # long file names
+      path <- paste0(outFolder,
+                    #extract_date, "_",
+                    #trial, "_",
+                    #Analysis, "_",
+                     names(clinicalPlotsWatermark)[plt],
+                     ".png")
+  
+      print(paste("plotting:", path))
+      png(filename = path,
+          res = 300,
+          width=(TOT/2 + 5),
+          height=(Patients/10 + 6),
+          units = "in")
+      print(clinicalPlotsWatermark[[plt]])
+      dev.off()
+  }
+}
+
+
+```
+
+```{r, save, eval=FALSE}
+dir.create(paste0("./data/", extract_date), showWarnings = FALSE)
+
+# save clinicalAnalysis in .Rda obj to ./data/ folder
+clinicalAnalysis$readme <- paste("Processed clinical data loaded from:", 
+      here(inClinical),
+      "Processed clinical analysis stored to:", 
+      paste0("./data/",extract_date, "/", script_name, ".Rda"),
+      "Clinical analysis computed using Repare's clinicalbioinfoextension library version:",
+      packageVersion("clinicalbioinfoextensions"))
+
+save(clinicalAnalysis,
+     file = paste0("./data/", extract_date, "/", script_name, ".Rda"))
+```
+
+```{r, additional plots, results='asis',fig.width=20,fig.height=18, eval=FALSE}
+
+cat(sprintf("\n\n# %s\n\n", paste("Add'l. Ad-Hoc Analysis")))
+
+# for M3 and M4 only
+analysisNames <- 
+  list(M3 = "M3-100D_M1_M2_M3_M4",
+       M4 = "M4-100D_M1_M2_M3_M4")
+
+
+for(modules in analysisNames){
+ # print(modules)
+
+  
+  DataSwimPlot <- clinicalAnalysis[[modules]]$clinicalPlotDF$DataSwimPlot
+  
+  DataSwimArrowPlot <- clinicalAnalysis[[modules]]$clinicalPlotDF$DataSwimArrowPlot
+  
+  DataSwimResponsePlot <- clinicalAnalysis[[modules]]$clinicalPlotDF$DataSwimResponsePlot
+  
+  DataSwimEventsNoSDPlot <- clinicalAnalysis[[modules]]$clinicalPlotDF$DataSwimEventsNoSDPlot
+  
+  #  TOT <- max(DataSwimPlot$Weeks)
+  # Patients <- nrow(DataSwimPlot)
+  
+  # specify patient scans by weeks:
+  # scans occur every 6 weeks from 0 - 18, then every 9 weeks from 18 - 48
+  # dynamically draw vline segment and x axis labels incrementally based on max Weeks and divisible by 9 weeks
+  max_weeks <- max(DataSwimPlot$Weeks)
+  max_week_segment <- as.numeric(max_weeks + (9 - max_weeks %% 9))
+  max_week_annotation <- ifelse(max_weeks> 18, max_week_segment, 48)
+  wks_scan <- data.frame(weeks = c(
+    seq(from = 0, to = 12, by = 6),
+    seq(from = 18, to = max_week_annotation, by = 9)))
+  
+    scaleShapeBreaks <- c("biallelic","suspect biallelic","monoallelic","CHIP","germline","somatic","Partial Response", "Progressive Disease")
+
+  
+  if(modules == "M3-100D_M1_M2_M3_M4"){
+    trt <- "Tala"
+  }else{
+    trt <- "Gem"
+  }
+   p <- ggplot(DataSwimPlot,aes(x=Weeks,y=reorder(ID.disease,Weeks))) +
+    geom_bar(aes(fill=`GeneGroup`),stat="identity") +
+    # geom_segment(data=DataSwimArrowPlot,aes(x=WeeksOngoing+.75,xend = WeeksOngoing,yend=reorder(`Patient No`,Weeks)), lwd = 1, col ="black",
+    #              arrow = arrow(length=unit(0.5,"cm"), ends="first", type = "closed"),arrow.fill = "green") + #shouldnt be Patient No
+    geom_segment(data=DataSwimArrowPlot,aes(x=WeeksOngoing+.75,xend = WeeksOngoing,yend=reorder(`ID.disease`,Weeks)), lwd = 1, col ="black",
+                 arrow = arrow(length=unit(0.5,"cm"), ends="first", type = "closed")) +
+    #geom_vline(xintercept = c(6,12),color="red",linetype = 2,alpha=1,size=1) +
+    # geom_vline(xintercept = c(seq(from= 18,to =48, by = 6)),color="black",linetype = 2,alpha=0.2) +
+    geom_vline(data = wks_scan, aes(xintercept = weeks),
+               color="black",alpha=0.2,linetype = 2,size=1) +
+    # add vline to legend
+    # scale_linetype_manual(
+    #   name = "Cycle Scans",
+    #   values = c(weeks = "dashed")) +
+    geom_point(aes(x=-.5,shape=`germline status`),size=3) +
+    geom_point(aes(x=-1.5,shape=`Type of loss`),size=3) +
+    geom_segment(data=DataSwimResponsePlot,
+                 aes(x=`Response Start`,
+                     xend = `Response End`,
+                     yend=reorder(ID.disease,Weeks)),
+                 size = 1) +
+    geom_point(data=DataSwimEventsNoSDPlot,
+               aes(x=`Response Weeks`,
+                   y=reorder(ID.disease,Weeks),
+                   shape=responseTypeLong),size=3) +
+    geom_text(aes(x=-16,label=paste("Module", Module, trt, `Combo Agent Dose`, "(mg)"))) +
+    geom_text(aes(x=-10,label=`Other STEP2`)) +
+    geom_text(aes(x=-8,label=`Daily Dose`)) +
+    geom_text(aes(x=-4,label=`Weekly Schedule`)) +
+    scale_shape_manual(breaks=scaleShapeBreaks,
+                       values=scaleShapeBreaksID[scaleShapeBreaks %in% names(scaleShapeBreaksID)]) + #specify shapes corresponding to scaleShapeBreaks
+    scale_x_continuous(limits = c(-18.1,max(DataSwimPlot$Weeks) + 1),
+                       breaks = c(seq(from= 0,to =max_week_annotation, by = 6))) +
+    ylab("") +
+    theme_Publication() + scale_fill_manual(values = GeneCol)  +
+    theme(axis.text.x=element_text(size=30,face="bold"),axis.title = element_text(size=40,face="bold"),strip.text.y = element_text(size = 19,margin = margin(0,0.5,0,0.5, "cm"))) +
+    facet_grid(GeneGroup ~ .,scales="free_y",space="free",switch="y") 
+   
+    outFolder <- paste0("./results/", script_name, "_results/", modules,"/")
+    
+    path <- paste0(outFolder, "Swimmer_Full_Combos.png")
+    
+    TOT <- max(DataSwimPlot$Weeks)
+    Patients <- nrow(DataSwimPlot)
+    png(path, 
+        res = 300,
+        width=(TOT/2 + 5),
+        height=(Patients/10 + 10),
+        units = "in" )
+    print(p)
+    dev.off()
+    
+    cat(sprintf("\n\n## %s\n\n", paste(modules)))
+    
+      cat(sprintf("\n\n#### %s\n\n", paste("Swimmer Plot RP3500-01 dose + Combo")))
+      print(p)
+
+}
+
+```

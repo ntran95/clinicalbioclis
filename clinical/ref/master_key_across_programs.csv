@@ -1,0 +1,67 @@
+﻿Master_Key,RP3500-01,RP3500-03,RP6306-01,Stats,Analysis
+Patient ID,Patient ID,Patient ID,,SUBJID,Clinical
+Dem,Dem,Dem,,,Clinical
+Tumor Type,Tumor Type,Tumor Type,Tumor Type EDC,,Clinical
+Tissue Type,Tissue Type,Tissue Type,Tissue Type Consolidated,TUTYPE,Clinical
+Module,Module,Arm,,MODULE,Clinical
+Weekly Schedule,Weekly Schedule,Weekly Schedule,,,Clinical
+Dose,Dose,RP-3500 Dose (QD),,,Clinical
+QD.BID,QD/BID,,,,Clinical
+Daily Dose,Daily Dose,,,,Clinical
+First dose,First dose,C1D1,,,Clinical
+Tx Discont.,Tx Discont.,Tx Discont.,End of Treatment,TRTEDT,Clinical
+Days,Days,Days,,,Clinical
+Weeks,Weeks,Weeks,,DOTRT_WEEK,Clinical
+Cycles,Cycles,Cycles,,,Clinical
+Off-Tx Flag,Off-Tx Flag,Off-Tx Flag,,DOTRT_CNSR,Clinical
+Assessment,Assessment,Assessment,,,Response
+Response Date,Response Date,Response Date,Disease Assessment Date,,Response
+Response Weeks,Response Weeks,Response Weeks,,,Response
+Size (mm),Size (mm),Size (mm),,,Response
+Response Type,Response Type,Response Type,Response,,Response
+% Change from Baseline,% Change from Baseline,% Change from Baseline,,,Response
+Tumor marker,Tumor marker,Tumor marker,Tumor Marker,,Tumor Markers
+Tumor Marker Weeks,Tumor Marker Weeks,Tumor Marker Weeks from Cycle 1 D1,,,Tumor Markers
+Tumor Marker Value,Tumor Marker Value,Tumor Marker Value,,,Tumor Markers
+Tumor Marker % Change From Baseline,Tumor Marker % Change From Baseline,Tumor Marker % Change From Baseline,% Change from Baseline,,Tumor Markers
+Marker Response,Marker Response,Marker Response,,,Tumor Markers
+Enrollment Gene,Enrollment Gene,Enrollment Gene,,GETYPE2,Genomics
+cDNA Change,cDNA Change,cDNA Change,,,Genomics
+AA Change,AA Change,AA Change,,,Genomics
+Other Alteration,Other Alteration,Other Change,,,Genomics
+Alterations (s),Alterations (s),Alterations (s),,,Genomics
+Alteration Classification,Alteration Classification,Alteration Classification,,,Genomics
+Enrollment VAF,Enrollment VAF,Enrollment VAF,,,Genomics
+TP53 Status,TP53 Status,TP53 Status,,,Genomics
+Other Drivers,Other Drivers,Other Drivers,,,Genomics
+TMB,TMB,TMB,,,Genomics
+MSI,MSI,MSI,,,Genomics
+Reversion,Reversion,Reversion,,,Genomics
+Enrollment Test Provider,Enrollment Test Provider,Enrollment Test Provider,,,Genomics
+Enrollment Test,Enrollment Test,Enrollment Test,,,Genomics
+Enrollment Test Type,Enrollment Test Type,Enrollment Test Type,,,Genomics
+germline status,germline status,germline status,,SOMATIC3,Genomics
+Germline call reason,Germline call reason,Germline call reason,,,Genomics
+Liquid biopsy Guardant Baseline,Liquid biopsy Guardant Baseline,Liquid biopsy Guardant Baseline,,,Genomics
+Liquid Biopsy Tempus Baseline,Liquid Biopsy Tempus Baseline,Liquid Biopsy Tempus Baseline,,,Genomics
+ATM IHC,ATM IHC,ATM IHC,,,Genomics
+RNASEH2 IHC,RNASEH2 IHC,RNASEH2 IHC,,,Genomics
+baseline gH2AX,baseline gH2AX,baseline gH2AX,,,Genomics
+Paired Biopsy (Y/N),Paired Biopsy (Y/N),Paired Biopsy (Y/N),,,Genomics
+Type of loss,Type of loss,Type of loss,,ZYGSITY3,SNiPDx
+SNiPDx PBMC,SNiPDx PBMC,SNiPDx PBMC,,,SNiPDx
+SNiPDx Tumor Mutation,SNiPDx Tumor Mutation,SNiPDx Tumor Mutation,,,SNiPDx
+SNiPDx Gene,SNiPDx Gene,SNiPDx Gene,,,SNiPDx
+SNIPDx cDNA Change,SNIPDx cDNA Change,SNIPDx cDNA Change,,,SNiPDx
+SNiPDx AA Change,SNiPDx AA Change,SNiPDx AA Change,,,SNiPDx
+SNiPDx Other,SNiPDx Other,SNiPDx Other,,,SNiPDx
+SNiPDx Alteration,SNiPDx Alteration,SNiPDx Alteration,,,SNiPDx
+SNiPDx Alteration Type,SNiPDx Alteration Type,SNiPDx Alteration Type,,,SNiPDx
+SNiPDx Tumor VAF,SNiPDx Tumor VAF,SNiPDx Tumor VAF,,,SNiPDx
+SNiPDx Tumor CN,SNiPDx Tumor CN,SNiPDx Tumor CN,,,SNiPDx
+Best % Change From Baseline,Best % Change From Baseline,Best % Change From Baseline,,BESTPCTTL,Processed_Clinical
+GeneGroup2,GeneGroup2,GeneGroup2,,GENCAT1,Processed_Clinical
+BOR,BOR,BOR,,,Processed_Clinical
+CA-125,CA-125,CA-125,,RESPCA_125,Processed_Clinical
+PSA,PSA,PSA,,RESPPSA,Processed_Clinical
+Event Type,Event Type,Event Type,,,DoseTransfusions
