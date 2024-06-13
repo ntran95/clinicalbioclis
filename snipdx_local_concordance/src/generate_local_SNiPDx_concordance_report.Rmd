@@ -1,0 +1,847 @@
+---
+title: "Local and SNiPDx Concordance"
+subtitle: "`r params$currTrial`"
+author: "Nicole Tran"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+knit: (function(input,...) {
+  rmarkdown::render(
+    input,    
+    knit_root_dir = here::here(),
+    output_dir = paste0("./results/")
+    )
+    }
+    )
+output:
+  html_document:
+    code_folding: hide
+    code_download: true
+    collapsed: yes
+    highlight: tango
+    number_sections: no
+    theme: yeti
+    toc: yes
+    toc_float: yes
+    toc_collapsed: false
+fontsize: 25pt
+editor_options:
+  chunk_output_type: console
+params:
+  inExtensions: inExtensions
+  inSNiPDx: inSNiPDx
+  inLocal: inLocal
+  currTrial: currTrial
+  blacklistedPatients: blacklistedPatients
+---
+
+```{=html}
+<style>
+    body {
+        font-size: 16px;
+        text-align: justify;
+    }
+
+    .main-container {
+        max-width: 80%;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    code {
+        font-size: 75%;
+    }
+
+    code.r {
+        font-size: 80%;
+    }
+
+    div.main-container {
+        max-width: 80%;
+    }
+    table {
+  white-space: nowrap;
+    }
+</style>
+```
+
+```{r, interactive_sess, eval=FALSE}
+params <- list()
+
+params$inExtensions <- here::here("/ClinBio/SP-ClinicalBioinformatics/shared/git-repos/reparecompbio/clinicalbioinfoextensions/")
+
+params$inLocal <- here::here("/ClinBio/SP-ClinicalBioinformatics/shared/RP3500/RP3500-01/SolveBio/processing/data/local-processed-data/2022-07-04/2022-07-04_RP3500-01_processed_local_data.rds")
+
+params$inSNiPDx <- here::here("/ClinBio/SP-ClinicalBioinformatics/shared/SNiPDx/RP3500-01/processing/data/2022-07-07_RP3500-01_SNiPDx_Complete_Inventory_Processed_Data.rds")
+
+params$currTrial <- "RP3500-01"
+
+params$blacklistedPatients <- "3003-0211"
+
+```
+
+```{r, setup, include=FALSE}
+#global knit options
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = FALSE)
+#knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file()) 
+
+
+library(tidyverse)
+library(shiny)
+library(readxl)
+library(openxlsx)
+library(reshape2)
+library(DT)
+library(survival)
+library(survminer)
+library(ggrepel)
+library(here)
+library(cowplot)
+library(rmarkdown)
+library(ComplexHeatmap)
+library(ggvenn)
+library(kableExtra)
+
+devtools::load_all(params$inExtensions)
+
+```
+
+# Analysis Summary
+```{r, results='asis'}
+cat(paste("Input local data pulled from:", params$inLocal))
+
+cat("\n\n")
+
+cat(paste("Input SNiPDx data pulled from:", params$inSNiPDx))
+
+```
+
+```{r, inputData}
+local <- readRDS(params$inLocal)
+
+snipdx <- readRDS(params$inSNiPDx)
+
+blacklistedPatients <- unlist(strsplit(params$blacklistedPatients, ","))
+
+```
+
+```{r, snipdx}
+# pull ngs slot
+snipdx.ngs <- snipdx@ngs
+
+snipdx.ngs <- snipdx.ngs[names(snipdx.ngs) %in% c("snv.indel", "cnv")]
+
+for(vt in names(snipdx.ngs)){
+  #print(vt)
+  for(data.type in names(snipdx.ngs[[vt]])){
+    #print(data.type)
+    
+    subdf <- snipdx.ngs[[vt]][[data.type]]
+    
+    subdf <- subdf %>%
+      # #filter out blacklisted patients
+      filter(SUBJID %notin% params$blacklistedPatients) %>%
+       #NOTE: should filtering for Mean coverage after joining or before?
+         filter(`Mean Coverage`> 500) %>%
+      mutate(snipdx = "detected",
+         `Patient ID` = SUBJID) %>%
+      #add genomic positions
+      mutate(`Genome Position` =  paste(paste0("chr",Chr.),Pos., 
+                               paste0(Ref., ">",
+                                      Alt.), sep = ":"))
+      
+    
+    if(data.type == "tissue NGS"){
+      ### Remove low purity and 0.3 purity which is low quality
+      # add quality filters only to tumor/ctDNA, does not pertain to germline
+      subdf <-  subdf %>%
+        filter(!is.na(facets.purity) & facets.purity != 0.3)
+    }
+    
+    if(vt == "snv.indel"){
+      # add quality filters only to tumor/ctDNA, does not pertain to germline
+      subdf <-  subdf %>%
+       filter(`Rep. Class.` %in% c("Tier 1", "Tier 2","Pathogenic", "Likely Pathogenic"))
+    }
+    
+    if(vt == "cnv"){
+      # add quality filters only to tumor/ctDNA, does not pertain to germline
+      subdf <-  subdf %>%
+       filter(facets.purity > .3)
+    }
+    
+    snipdx.ngs[[vt]][[data.type]] <- subdf
+  }
+}
+```
+
+
+
+```{r, local}
+# pull ngs slot
+local.ngs <- local@ngs
+
+local.ngs <- local.ngs[names(local.ngs) %in% c("snv.indel", "cnv")]
+
+### look only at short variants and exclude varaints in introns
+## Filter on SNiPDx Genes Only
+### Only consider pathogenic or unlisted alterations (exclude VUS, benign, risk factor)
+local.ngs <- lapply(local.ngs, function(df){
+  lapply(df, function(subdf){
+    subdf %>% 
+      filter(SNiPDx_Gene %in% "TRUE") %>%
+      filter(is.na(`Variant Assessment`) | `Variant Assessment` %in% "pathogenic" ) %>% 
+      #  #filter out blacklisted patients
+      filter(`Patient ID` %notin% params$blacklistedPatients) %>%
+      # ENSURE TO USE %NOTIN% OR %IN% INSTEAD OF != AND ==, OPERATORS DO NOT RECOGNIZE NAs
+      filter(`SV Effect` %notin% "intron_variant" & `SV Effect`%notin% "upstream_transcript_variant" ) %>%
+  mutate(local = "detected",
+         SNiPDx_Gene = "detected")
+    })
+})
+
+```
+
+
+```{r, results="hide", eval=FALSE}
+### ==== test individually ==== ####
+# test
+snipdx.df <- snipdx.ngs$snv.indel$germline
+
+local.df <- local.ngs$snv.indel$germline
+
+shared.patients <- intersect(snipdx.df$`Patient ID`,
+                             local.df$`Patient ID`)
+
+### Find Shared and Unique Samples
+shared.local.df <- local.df %>%
+  filter(`Patient ID` %in% shared.patients)
+
+### match shared patients with corresponding panel name
+patient.panel.df <- shared.local.df %>%
+  distinct(`Patient ID`, `Panel Provider`, `Panel Name`, `Consolidated Panel`)
+
+shared.snipdx.df <- snipdx.df %>%
+  filter(`Patient ID` %in% shared.patients) %>%
+  inner_join(patient.panel.df)
+
+full.join <-  full_join(shared.local.df, shared.snipdx.df,
+                     by = c("Patient ID","Gene","AAChange",
+                          "Panel Provider", "Panel Name", "Consolidated Panel"),
+                   suffix = c(".local", ".SNiPDx")) %>%
+      # annotate which variants are detected within local and snipdx
+      mutate(snipdx = case_when(is.na(snipdx) ~ "not detected",
+                                 TRUE ~ snipdx)) %>%
+       mutate(local = case_when(is.na(local) ~ "not detected",
+                                 TRUE ~ local)) %>%
+      # annotate variants shared across local and snipdx
+      mutate(shared = case_when(snipdx %in% "detected" &
+                                local %in% "detected" ~ "shared",
+                                snipdx %in% "detected" &
+                                local %in% "not detected" ~ "snipdx only",
+                                snipdx %in% "not detected" &
+                                local %in% "detected" ~ "local only"))%>%
+    # mutate SNiPDx_Gene to include SNIPDX entries
+      mutate(SNiPDx_Gene = case_when(is.na(SNiPDx_Gene) &
+                                     snipdx %in% "detected" ~ "detected",
+                                   TRUE~ SNiPDx_Gene)) %>%
+        # create distinct entries for concordance frequency within patient, and gene
+      mutate(AAChange.distinct = paste(`Patient ID`,Gene,AAChange, sep = "|")) %>%
+        relocate(Gene, AAChange, AAChange.distinct, 
+                 `Genome Position.local`, `Genome Position.SNiPDx`,
+                 local, snipdx, shared,
+                 .after = `Patient ID`)
+  
+   # full.join.distinct <- full.join %>%
+   #      distinct(`Patient ID`,Gene,AAChange,.keep_all = T)
+   
+   full.join.distinct <- full.join %>%
+        distinct(Gene, AAChange,.keep_all = T)
+   
+        # ensure NAs are omitted
+    # store alts that are
+   
+    lt <- list(snipdx = full.join$AAChange[full.join$snipdx %in% "detected" &
+                                           !is.na(full.join$AAChange)],
+               local = full.join$AAChange[full.join$local %in% "detected" &
+                                            !is.na(full.join$AAChange)])
+   
+    lt.unique <- list(snipdx = full.join.distinct$AAChange.distinct[full.join.distinct$snipdx %in% "detected" &
+                                           !is.na(full.join.distinct$AAChange)],
+               local = full.join.distinct$AAChange.distinct[full.join.distinct$local %in% "detected" &
+                                            !is.na(full.join.distinct$AAChange)])
+    
+full.join.distinct.panel <-
+  full.join %>%
+  distinct(`Patient ID`, `Panel Provider`, `Panel Name`, `Consolidated Panel`, local, snipdx, shared)
+
+#### ==== check cnv ==== ####
+# test
+snipdx.df <- snipdx.ngs$cnv$`tissue NGS`
+
+snipdx.ngs$cnv$cnv %>% select(SUBJID, Gene, CNV, `Test Type`) %>% View()
+
+snipdx.df %>% select(`Patient ID`, Gene, CNV) %>% View()
+
+local.df <- local.ngs$cnv$`tissue NGS`
+
+local.df %>% select(`Patient ID`, Gene, `CNV Result`) %>% View()
+
+
+shared.patients <- intersect(snipdx.df$`Patient ID`,
+                             local.df$`Patient ID`)
+
+### Find Shared and Unique Samples
+shared.local.df <- local.df %>%
+  filter(`Patient ID` %in% shared.patients) 
+
+### match shared patients with corresponding panel name
+patient.panel.df <- shared.local.df %>%
+  distinct(`Patient ID`, `Panel Provider`, `Panel Name`, `Consolidated Panel`)
+
+shared.local.df <- shared.local.df 
+#%>%
+  #select(`Patient ID`, Gene, `CNV Result`,local)
+
+shared.snipdx.df <- snipdx.df %>%
+  filter(`Patient ID` %in% shared.patients) %>%
+  inner_join(patient.panel.df)# %>% 
+  #select(`Patient ID`, Gene, CNV,snipdx)
+
+
+tmp <- full_join(shared.local.df,
+                 shared.snipdx.df,
+                 by = c("Patient ID","Gene","CNV Result" = "CNV"),
+                   suffix = c(".local", ".SNiPDx"))%>%
+       # remove patients defined with "neutral" CNVs in SNIPDX bc local dont make those calls
+       filter(`CNV Result` %notin% "neutral")
+  
+
+  full.join <- full_join(shared.local.df, shared.snipdx.df,
+                   by = c("Patient ID","Gene","CNV Result" = "CNV"
+                          ,"Panel Provider", "Panel Name", "Consolidated Panel"
+                          ),
+                   suffix = c(".local", ".SNiPDx")) %>%
+    # annotate which variants are detected within local and snipdx
+    mutate(snipdx = case_when(is.na(snipdx) ~ "not detected",
+                               TRUE ~ snipdx)) %>%
+     mutate(local = case_when(is.na(local) ~ "not detected",
+                               TRUE ~ local)) %>%
+    # annotate variants shared across local and snipdx
+    mutate(shared = case_when(snipdx %in% "detected" &
+                              local %in% "detected" ~ "shared",
+                              snipdx %in% "detected" &
+                              local %in% "not detected" ~ "snipdx only",
+                              snipdx %in% "not detected" &
+                              local %in% "detected" ~ "local only"))%>%
+    # mutate SNiPDx_Gene to include SNIPDX entries
+    mutate(SNiPDx_Gene = case_when(is.na(SNiPDx_Gene) &
+                                     snipdx %in% "detected" ~ "detected",
+                                   TRUE~ SNiPDx_Gene)) %>%
+        # create distinct entries for concordance frequency within patient, and gene
+         mutate(`CNV Result.distinct` = paste(`Patient ID`,Gene,`CNV Result`, sep = "|"))%>%
+        relocate(Gene, `CNV Result`, `CNV Result.distinct`, local, snipdx, shared,
+                 .after = `Patient ID`) %>%
+       # remove patients defined with "neutral" CNVs in SNIPDX bc local dont make those calls
+       filter(`CNV Result` %notin% "neutral")
+  
+  full.join.distinct <- full.join %>%
+        distinct(`Patient ID`,Gene,`CNV Result`,.keep_all = T)
+  
+   full.join.distinct.panel %>%
+      dcast(., `Consolidated Panel` ~ shared,margins = T)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+       
+      cat(sprintf("\n\n#### %s\n\n", 
+              "Panel Name by Detection Status"))
+      
+       full.join.distinct.panel %>%
+      dcast(., `Panel Name` ~ shared,margins = T)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+       
+        full.join.distinct %>%
+        dcast(., `CNV Result` ~ shared)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+      
+        
+ full.join <- merge_local_SNiPDx_cnv(snipdx.df = snipdx.df,
+                                                local.df =  local.df)
+
+      
+```
+
+```{r, merge_snvindel}
+
+##TODO:
+merge_local_SNiPDx_snv_indel <- function(snipdx.df, local.df){
+  
+    # #shared patients 
+     shared.patients <- intersect(snipdx.df$`Patient ID`,
+                                  local.df$`Patient ID`)
+
+     ### Find Shared and Unique Samples
+      shared.snipdx.df <- snipdx.df %>%
+        filter(`Patient ID` %in% shared.patients)
+
+      shared.local.df <- local.df %>%
+        filter(`Patient ID` %in% shared.patients)
+
+       full.join <- full_join(shared.local.df, shared.snipdx.df,
+                     by = c("Patient ID","Gene","AAChange",
+                          "Panel Provider", "Panel Name", "Consolidated Panel"),
+                   suffix = c(".local", ".SNiPDx")) %>%
+      # annotate which variants are detected within local and snipdx
+      mutate(snipdx = case_when(is.na(snipdx) ~ "not detected",
+                                 TRUE ~ snipdx)) %>%
+       mutate(local = case_when(is.na(local) ~ "not detected",
+                                 TRUE ~ local)) %>%
+      # annotate variants shared across local and snipdx
+      mutate(shared = case_when(snipdx %in% "detected" &
+                                local %in% "detected" ~ "shared",
+                                snipdx %in% "detected" &
+                                local %in% "not detected" ~ "snipdx only",
+                                snipdx %in% "not detected" &
+                                local %in% "detected" ~ "local only"))%>%
+    # mutate SNiPDx_Gene to include SNIPDX entries
+      mutate(SNiPDx_Gene = case_when(is.na(SNiPDx_Gene) &
+                                     snipdx %in% "detected" ~ "detected",
+                                   TRUE~ SNiPDx_Gene)) %>%
+        # create distinct entries for concordance frequency within patient, and gene
+      mutate(AAChange.distinct = paste(`Patient ID`,Gene,AAChange, sep = "|")) %>%
+        relocate(Gene, AAChange, AAChange.distinct, 
+                 `Genome Position.local`, `Genome Position.SNiPDx`,
+                 local, snipdx, shared,
+                 .after = `Patient ID`)
+   
+   return(full.join)
+   
+}
+
+merge_local_SNiPDx_cnv <- function(snipdx.df, local.df){
+  
+    # #shared patients 
+     shared.patients <- intersect(snipdx.df$`Patient ID`,
+                                  local.df$`Patient ID`)
+
+     ### Find Shared and Unique Samples
+      shared.snipdx.df <- snipdx.df %>%
+        filter(`Patient ID` %in% shared.patients)
+
+      shared.local.df <- local.df %>%
+        filter(`Patient ID` %in% shared.patients)
+      
+       # if CNV, merge by Patient, Gene, and CNV (hetloss, homedel, gain, amp)
+       full.join <- full_join(shared.local.df, shared.snipdx.df,
+                   by = c("Patient ID","Gene","CNV Result" = "CNV",
+                          "Panel Provider", "Panel Name", "Consolidated Panel"),
+                   suffix = c(".local", ".SNiPDx")) %>%
+    # annotate which variants are detected within local and snipdx
+    mutate(snipdx = case_when(is.na(snipdx) ~ "not detected",
+                               TRUE ~ snipdx)) %>%
+     mutate(local = case_when(is.na(local) ~ "not detected",
+                               TRUE ~ local)) %>%
+    # annotate variants shared across local and snipdx
+    mutate(shared = case_when(snipdx %in% "detected" &
+                              local %in% "detected" ~ "shared",
+                              snipdx %in% "detected" &
+                              local %in% "not detected" ~ "snipdx only",
+                              snipdx %in% "not detected" &
+                              local %in% "detected" ~ "local only"))%>%
+    # mutate SNiPDx_Gene to include SNIPDX entries
+    mutate(SNiPDx_Gene = case_when(is.na(SNiPDx_Gene) &
+                                     snipdx %in% "detected" ~ "detected",
+                                   TRUE~ SNiPDx_Gene)) %>%
+        # create distinct entries for concordance frequency within patient, and gene
+         mutate(`CNV Result.distinct` = paste(`Patient ID`,Gene,`CNV Result`, sep = "|"))%>%
+        relocate(Gene, `CNV Result`, `CNV Result.distinct`, local, snipdx, shared,
+                 .after = `Patient ID`) %>%
+       # remove patients defined with "neutral" CNVs in SNIPDX bc local dont make those calls
+       filter(`CNV Result` %notin% "neutral")
+      
+    return(full.join)
+}
+
+
+concordance <- list()
+
+variant.types <- intersect(names(snipdx.ngs), names(local.ngs))
+
+# find intersecting variant types across snipdx and local (snv.indel, cnv)
+for(vt in variant.types){
+  
+  shared.test.type <- intersect(names(snipdx.ngs[[vt]]),
+                                names(local.ngs[[vt]]))
+  
+  curr.snipdx.vt <- snipdx.ngs[[vt]][shared.test.type]
+  
+  curr.local.vt <- local.ngs[[vt]][shared.test.type]
+  
+  for(data.type in shared.test.type){
+     # extract out test type df
+      snipdx.df <- curr.snipdx.vt[[data.type]]
+
+      local.df <- curr.local.vt[[data.type]]
+      
+      shared.patients <- intersect(snipdx.df$`Patient ID`,
+                             local.df$`Patient ID`)
+      
+     ### Find Shared and Unique Samples
+      shared.local.df <- local.df %>%
+        filter(`Patient ID` %in% shared.patients)
+      
+      ### match shared patients with corresponding panel name
+      patient.panel.df <- shared.local.df %>%
+        distinct(`Patient ID`, `Panel Provider`, `Panel Name`, `Consolidated Panel`)
+      
+      shared.snipdx.df <- snipdx.df %>%
+        filter(`Patient ID` %in% shared.patients) %>%
+        inner_join(patient.panel.df)
+
+
+     ####==== merge ==== ####
+    # if snv.indel-- merge by Patient, Gene, and Alteration
+    if (vt == "snv.indel"){
+      full.join <- merge_local_SNiPDx_snv_indel(snipdx.df = shared.snipdx.df,
+                                                local.df =  shared.local.df)
+      
+      # full.join <- merge_local_SNiPDx_snv_indel(snipdx.df = shared.snipdx.df,
+      #                                           local.df =  shared.local.df)
+ 
+   # full.join.distinct <- full.join %>%
+   #      distinct(`Patient ID`,Gene,AAChange,.keep_all = T)
+      
+      full.join.distinct <- full.join %>%
+        distinct(Gene, AAChange,.keep_all = T)
+      
+   
+        # ensure NAs are omitted
+    lt <- list(snipdx = full.join$AAChange[full.join$snipdx %in% "detected" &
+                                           !is.na(full.join$AAChange)],
+               local = full.join$AAChange[full.join$local %in% "detected" &
+                                            !is.na(full.join$AAChange)])
+   
+    lt.unique <- list(snipdx = full.join.distinct$AAChange.distinct[full.join.distinct$snipdx %in% "detected" &
+                                           !is.na(full.join.distinct$AAChange)],
+               local = full.join.distinct$AAChange.distinct[full.join.distinct$local %in% "detected" &
+                                            !is.na(full.join.distinct$AAChange)])
+    
+    }else{
+     full.join <- merge_local_SNiPDx_cnv(snipdx.df = shared.snipdx.df,
+                                                local.df =  shared.local.df)
+     
+     ### focus on HomDels and Amps only 
+     full.join <- full.join %>%
+       filter(`CNV Result` %in% c("amp", "homdel"))
+
+      # full.join <- merge_local_SNiPDx_cnv(snipdx.df = shared.snipdx.df,
+      #                                    local.df = shared.local.df)
+   full.join.distinct <- full.join %>%
+        distinct(`Patient ID`,Gene,`CNV Result`,.keep_all = T)
+       
+         # ensure NAs are omitted
+    # store CNV calls that are
+    lt <- list(snipdx = full.join$`CNV Result`[full.join$snipdx %in% "detected" &
+                                           !is.na(full.join$`CNV Result`)],
+               local = full.join$`CNV Result`[full.join$local %in% "detected" &
+                                            !is.na(full.join$`CNV Result`)])
+   
+     lt.unique <- list(snipdx = full.join.distinct$`CNV Result.distinct`[full.join.distinct$snipdx %in% "detected"],
+               local = full.join.distinct$`CNV Result.distinct`[full.join.distinct$local %in% "detected"])
+    }
+    
+     
+     full.join.distinct.panel <-full.join %>%
+       distinct(`Patient ID`, `Panel Provider`, `Panel Name`,
+                `Consolidated Panel`, local, snipdx, shared)
+    
+    res <- list("full.join" = full.join,
+                "full.join.distinct" = full.join.distinct,
+                "full.join.distinct.panel" = full.join.distinct.panel,
+                "detected" = lt,
+                "detected.unique" = lt.unique)
+
+    concordance[[vt]][[data.type]] <- res
+  }
+}
+```
+
+```{r include = FALSE}
+# Why, oh why do I need this chunk?
+DT::datatable(matrix())
+```
+
+
+```{r, knitOut_snv.indel, results='asis', fig.width=7, fig.height=4}
+currConcordance <- concordance$snv.indel
+
+cat("# SNIPDX and Local SNV and Indel Concordance")
+
+subheaders <- paste(names(currConcordance), "subset")
+
+subheaders[1] <- paste("Complete", subheaders[1])
+
+for(currAnalysis in seq_along(subheaders)){
+  
+  full.join <- currConcordance[[currAnalysis]]$full.join
+  
+  full.join.distinct <- currConcordance[[currAnalysis]]$full.join.distinct
+  
+  full.join.distinct.panel <- currConcordance[[currAnalysis]]$full.join.distinct.panel
+  
+  detected <- currConcordance[[currAnalysis]]$detected
+  
+  if(nrow(full.join)>0){
+     cat(sprintf("\n\n## %s\n\n", 
+              paste(subheaders[currAnalysis])))
+  
+     # tryCatch({
+      cat("\n\n")
+      cat("### Summary Tables")
+      cat(knitr::knit_print(DT::datatable(full.join.distinct,
+                                          width = "100%",
+                                          rownames = FALSE,
+      #filter = 'top',
+                  options = list( scrollX = TRUE,
+                                  scrollCollapse = TRUE))))
+    
+      
+      cat("\n\n")
+      
+      cat(sprintf("\n\n### %s\n\n", 
+              "Plots"))
+      
+    
+        m = make_comb_mat(detected)
+    
+        ht <- UpSet(m, comb_col = c('black', '#0073C2FF', '#EFC000FF'))
+        od = column_order(ht)
+        cs = comb_size(m)
+    
+        # decorate_annotation("intersection_size", {
+        # grid.text(cs[od], x = seq_along(cs), y = unit(cs[od], "native") + unit(2, "pt"), 
+        #     default.units = "native", just = "bottom", gp = gpar(fontsize = 8))
+        #   })
+        
+        print(ht)
+        
+     cat("\n\n")
+      venn <- ggvenn(
+        detected, 
+        fill_color = c("#0073C2FF", "#EFC000FF"),
+        stroke_size = 0.5, set_name_size = 2,text_size = 6
+        )
+      
+      print(venn)
+      
+      cat("\n\n")
+      cat(sprintf("\n\n### %s\n\n", 
+              "Contigency Tables"))
+      
+      cat(sprintf("\n\n#### %s\n\n", 
+              "SNiPDx Genes by Detection Status"))
+      
+      full.join.distinct %>%
+      dcast(., Gene ~ shared,margins = T)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+      
+      
+      cat(sprintf("\n\n#### %s\n\n", 
+              "Consolidated Panel by Detection Status"))
+      
+
+       full.join.distinct.panel %>%
+      dcast(., `Consolidated Panel` ~ shared,margins = T)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+       
+      cat(sprintf("\n\n#### %s\n\n", 
+              "Panel Name by Detection Status"))
+      
+       full.join.distinct.panel %>%
+      dcast(., `Panel Name` ~ shared,margins = T)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+       
+  }else{
+    next
+  }
+  
+ 
+  
+}
+```
+
+```{r include = FALSE}
+# Why, oh why do I need this chunk?
+DT::datatable(matrix())
+```
+
+
+```{r, knitOut_cnv, results='asis', fig.width=7, fig.height=4}
+currConcordance <- concordance$cnv
+
+cat("# SNIPDX and Local CNV Concordance")
+
+subheaders <- paste(names(currConcordance), "subset")
+
+subheaders[1] <- paste("Complete", subheaders[1])
+
+for(currAnalysis in seq_along(subheaders)){
+  
+  full.join <- currConcordance[[currAnalysis]]$full.join
+  
+  full.join.distinct <-  currConcordance[[currAnalysis]]$full.join.distinct
+  
+  full.join.distinct.panel <- currConcordance[[currAnalysis]]$full.join.distinct.panel
+  
+  detected <- currConcordance[[currAnalysis]]$detected.unique
+  
+  cnv.types <- unique(full.join$`CNV Result`)
+  
+  cnv.split <- split(full.join.distinct,
+                     full.join.distinct$`CNV Result`)
+  
+  if(nrow(full.join)>0){
+     cat(sprintf("\n\n## %s\n\n", 
+              paste(subheaders[currAnalysis])))
+  
+     # tryCatch({
+      cat("\n\n")
+      cat("### Summary Tables")
+      cat(knitr::knit_print(DT::datatable(full.join.distinct,
+                                          width = "100%",
+                                          rownames = FALSE,
+      #filter = 'top',
+                  options = list( scrollX = TRUE,
+                                  scrollCollapse = TRUE))))
+    
+      
+      cat("\n\n")
+      
+      cat(sprintf("\n\n### %s\n\n", 
+              "Plots"))
+      
+    
+        m = make_comb_mat(detected)
+    
+        ht <- UpSet(m,comb_col = c('black', '#0073C2FF', '#EFC000FF'))
+        
+        od = column_order(ht)
+        cs = comb_size(m)
+    
+        # decorate_annotation("intersection_size", {
+        # grid.text(cs[od], x = seq_along(cs), y = unit(cs[od], "native") + unit(2, "pt"), 
+        #     default.units = "native", just = "bottom", gp = gpar(fontsize = 8))
+        #   })
+        
+        print(ht)
+    
+         cat("\n\n")
+      venn <- ggvenn(
+        detected, 
+        fill_color = c("#0073C2FF", "#EFC000FF"),
+        stroke_size = 0.5, set_name_size = 2,text_size = 6
+        )
+      
+      print(venn)
+      
+      cat("\n\n")
+      cat(sprintf("\n\n### %s\n\n", 
+              "Contigency Tables"))
+      
+      cat(sprintf("\n\n#### %s\n\n", 
+              "By SNiPDx Genes and Detection Status"))
+      
+      full.join.distinct %>%
+      dcast(., Gene ~ shared)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+      
+      
+      cat(sprintf("\n\n#### %s\n\n", 
+              "Consolidated Panel by Detection Status"))
+      # 
+       full.join.distinct.panel %>%
+      dcast(., `Consolidated Panel` ~ shared,margins = T)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+       
+      cat(sprintf("\n\n#### %s\n\n", 
+              "Panel Name by Detection Status"))
+      
+       full.join.distinct.panel %>%
+      dcast(., `Panel Name` ~ shared,margins = T)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+       
+       
+       cat(sprintf("\n\n#### %s\n\n", 
+              "CNV Results by Detection Status {.tabset .tabset-pills}"))
+      
+      full.join.distinct %>%
+        dcast(., `CNV Result` ~ shared)%>%
+          kbl(format = "html") %>%
+      kable_styling()  %>% 
+        print()
+      
+      for(calls in cnv.types){
+        
+        cat(sprintf("\n\n##### %s\n\n", 
+          paste(calls, "only subset")))
+        
+      
+        curr.snc.split <- cnv.split[[calls]]
+         
+         lt.unique <- 
+           list(snipdx = curr.snc.split$`CNV Result.distinct`[curr.snc.split$snipdx %in% "detected"],
+                local = curr.snc.split$`CNV Result.distinct`[curr.snc.split$local %in% "detected"])
+         
+         names(lt.unique) <- paste(calls, "in", names(lt.unique))
+         
+          m = make_comb_mat(lt.unique)
+    
+          ht <- UpSet(m, comb_col = c('black', '#0073C2FF', '#EFC000FF'))
+          
+          print(ht)
+         
+          cat("\n\n")
+          venn <- ggvenn(
+            lt.unique, 
+            fill_color = c("#0073C2FF", "#EFC000FF"),
+            stroke_size = 0.5, set_name_size = 2,text_size = 6
+            )
+      
+        print(venn)
+      
+      cat("\n\n")
+         
+      }
+      
+
+  }else{
+    next
+  }
+  
+ 
+  
+}
+```
+
+```{r,save}
+outFolder <- paste0("./data/","local-SNiPDx-concordance", "/")
+dir.create(outFolder, recursive = T,showWarnings = F)
+
+saveRDS(concordance,
+        file = paste0(outFolder, Sys.Date(), "_", params$currTrial, "_local_and_snipdx_concordance.rds"))
+```
