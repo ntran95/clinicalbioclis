@@ -1,0 +1,207 @@
+---
+title: "Processed PD Report for `r params$trial`"
+date:  "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    code_download: true
+    collapsed: yes
+    highlight: tango
+    number_sections: no
+    theme: yeti
+    toc: true
+    toc_float: true
+fontsize: 25pt
+editor_options:
+  chunk_output_type: console
+params:
+  pd: pd
+  date: date
+  trial: trial
+  functions: functions
+  resultsdir: resultsdir
+---
+
+<style>
+table {
+  white-space: nowrap;
+}
+</style>
+
+```{r,inputVar, echo=FALSE, eval=FALSE}
+# ==== interactive session ====
+# does not run when knitted
+params <- list()
+
+params$pd <- "/ClinBio/SP-ClinicalBioinformatics/shared/git-repos/reparecompbio/clinicalbioinfoCLIs/pd/test/data/2022-12-30_RP3500-01_processedPD.rds"
+params$date <- "2022-12-30"
+params$trial <- "RP3500-01"
+params$functions <- "/ClinBio/SP-ClinicalBioinformatics/shared/git-repos/reparecompbio/clinicalbioinfoextensions/"
+params$resultsdir <-"/ClinBio/SP-ClinicalBioinformatics/shared/git-repos/reparecompbio/clinicalbioinfoCLIs/pd/test/results/"
+
+
+```
+
+```{r,setup, include=FALSE}
+print(getwd())
+
+#global knit options
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, echo = FALSE)
+#knitr::opts_knit$set(root.dir = here::here()) 
+options(scipen=999)
+
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(reshape2)
+library(DT)
+library(ggrepel)
+library(cowplot)
+library(purrr)
+library(dplyr)
+library(lubridate)
+```
+
+```{r,readIn, echo=FALSE}
+pd <- readRDS(params$pd)
+date <- params$date
+trial <- params$trial 
+functions <- params$functions
+resultsdir <- params$resultsdir
+
+devtools::load_all(functions)
+
+script_name <- paste(date, trial, "pd", "analysis", sep = "_")
+
+```
+
+## Tables {.tabset .tabset-pills}
+
+### Baseline Biopsy
+
+```{r baseline_df, echo=FALSE, warning=FALSE, results = 'asis'}
+
+BaselineBiopsyCombined <- pd@BaselineBiopsyCombined
+
+DT::datatable(BaselineBiopsyCombined[,baseline_cols_to_keep], width = "100%", rownames = FALSE, filter = "top", 
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'vaf_summary'),
+                                                                     list(extend = 'excel', filename = 'vaf_summary'))))
+
+```
+
+### Paired Biopsy
+
+```{r paired_df, echo=FALSE, warning=FALSE, results = 'asis'}
+
+PairedBiopsy <- pd@PairedBiopsy
+
+DT::datatable(PairedBiopsy[,paired_cols_to_keep], width = "100%", rownames = FALSE, filter = "top", 
+              extensions = 'Buttons', options = list( scrollX = TRUE, dom = "Bfrtip", 
+                                                      buttons = list(list(extend = 'csv', filename= 'vaf_summary'),
+                                                                     list(extend = 'excel', filename = 'vaf_summary'))))
+
+```
+
+
+## Paired Biopsy Stain Significance Tests
+
+```{r tests, echo=FALSE, warning=FALSE}
+PairedBiopsyStain <- pd@PairedBiopsyStain
+
+PairedBiopsyStainTest <- lapply(PairedBiopsyStain, function(x){
+  x <- dcast(x,`Patient ID`~VISIT+Stain,value.var="H-Score")
+  #
+})
+
+wilcox.test(PairedBiopsyStainTest$H2AX$`Pre-Tx`,
+            PairedBiopsyStainTest$H2AX$`On-Tx`,paired = T,exact = F) 
+
+
+wilcox.test(PairedBiopsyStainTest$pKAP1$`Pre-Tx`,
+            PairedBiopsyStainTest$H2AX$`On-Tx`,paired = T, exact = F)
+
+t.test(PairedBiopsyStainTest$H2AX$`Pre-Tx`,
+       PairedBiopsyStainTest$H2AX$`On-Tx`,paired = T)
+
+t.test(PairedBiopsyStainTest$pKAP1$`Pre-Tx`,
+       PairedBiopsyStainTest$H2AX$`On-Tx`,paired = T)
+
+```
+
+## Plots
+
+### Baseline Plots 
+
+#### Baseline pH2AX H-Score Boxplot by Enrollment Gene
+
+```{r, echo=FALSE, warning=FALSE, results = 'asis',fig.height=10, fig.width=16}
+print(pd@BaselineBiopsyPlots$`Baseline Boxplot`)
+
+```
+
+#### Baseline pH2AX H-Score Barplot Faceted Sources
+
+```{r bl_hscores, echo=FALSE, warning=FALSE, results = 'asis',fig.height=10, fig.width=16}
+print(pd@BaselineBiopsyPlots$`Baseline Boxplot by Sources`)
+
+```
+
+#### Baseline H-Score Barplot by Stains {.tabset .tabset-pills}
+
+```{r, echo=FALSE, warning=FALSE, results = 'asis',fig.height=8, fig.width=8}
+
+for(i in 1:length(pd@BaselineBiopsyPlots$`Baseline Stain Barplot`)){
+  
+  cat("\n\n")
+  cat('##### ', names(pd@BaselineBiopsyPlots$`Baseline Stain Barplot`)[[i]], "\n\n")
+  print(pd@BaselineBiopsyPlots$`Baseline Stain Barplot`[[i]])
+  cat("\n\n")
+
+  }
+```
+
+### Paired Plots 
+
+#### Paired H-Score Line Plot by Stain {.tabset .tabset-pills}
+
+```{r, echo=FALSE, warning=FALSE, results = 'asis',fig.height=8, fig.width=8}
+
+for(i in 1:length(pd@PairedBiopsyPlots$`Paired Stain Line Plot`)){
+  
+  cat("\n\n")
+  cat('##### ', names(pd@PairedBiopsyPlots$`Paired Stain Line Plot`)[[i]], "\n\n")
+  print(pd@PairedBiopsyPlots$`Paired Stain Line Plot`[[i]])
+  cat("\n\n")
+
+  }
+```
+
+
+#### Paired H-Score % Change Line Plot by Stain {.tabset .tabset-pills}
+
+```{r, echo=FALSE, warning=FALSE, results = 'asis',fig.height=8, fig.width=8}
+
+for(i in 1:length(pd@PairedBiopsyPlots$`Paired Stain % Change Line Plot`)){
+  
+  cat("\n\n")
+  cat('##### ', names(pd@PairedBiopsyPlots$`Paired Stain % Change Line Plot`)[[i]], "\n\n")
+  print(pd@PairedBiopsyPlots$`Paired Stain % Change Line Plot`[[i]])
+  cat("\n\n")
+
+  }
+```
+
+#### Paired H-Score BarPlot by Stain {.tabset .tabset-pills}
+
+```{r, echo=FALSE, warning=FALSE, results = 'asis',fig.height=16, fig.width=12}
+
+for(i in 1:length(pd@PairedBiopsyPlots$`Paired Stain Barplot`)){
+  
+  cat("\n\n")
+  cat('##### ', names(pd@PairedBiopsyPlots$`Paired Stain Barplot`)[[i]], "\n\n")
+  print(pd@PairedBiopsyPlots$`Paired Stain Barplot`[[i]])
+  cat("\n\n")
+
+  }
+```
